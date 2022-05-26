@@ -9,7 +9,7 @@ RUN [ ! -e /etc/nsswitch.conf ] && echo 'hosts: files dns' > /etc/nsswitch.conf
 
 ENV PATH /usr/local/go/bin:$PATH
 
-ENV GOLANG_VERSION 1.17.6
+ENV GOLANG_VERSION 1.18
 
 RUN set -eux; \
 	apk add --no-cache --virtual .fetch-deps gnupg; \
@@ -43,8 +43,8 @@ RUN set -eux; \
 	if [ -z "$url" ]; then \
 # https://github.com/golang/go/issues/38536#issuecomment-616897960
 		build=1; \
-		url='https://dl.google.com/go/go1.17.6.src.tar.gz'; \
-		sha256='4dc1bbf3ff61f0c1ff2b19355e6d88151a70126268a47c761477686ef94748c8'; \
+		url='https://dl.google.com/go/go1.18.src.tar.gz'; \
+		sha256='38f423db4cc834883f2b52344282fa7a39fbb93650dc62a11fdf0be6409bdad6'; \
 # the precompiled binaries published by Go upstream are not compatible with Alpine, so we always build from source here 😅
 	fi; \
 	\
@@ -72,6 +72,14 @@ RUN set -eux; \
 			go \
 			musl-dev \
 		; \
+		if [ "$GOARCH" = 'ppc64le' ]; then \
+# https://github.com/golang/go/issues/51787
+			wget -O ppc64le-alpine.patch 'https://github.com/golang/go/commit/946167906ed8646c433c257b074a10e01f0a7dab.patch'; \
+			apk add --no-cache --virtual .build-patch patch; \
+			patch --strip=1 --input="$PWD/ppc64le-alpine.patch" --directory=/usr/local/go; \
+			apk del --no-network .build-patch; \
+			rm ppc64le-alpine.patch; \
+		fi; \
 		\
 		( \
 			cd /usr/local/go/src; \
@@ -81,11 +89,6 @@ RUN set -eux; \
 		); \
 		\
 		apk del --no-network .build-deps; \
-		\
-# pre-compile the standard library, just like the official binary release tarballs do
-		go install std; \
-# go install: -race is only supported on linux/amd64, linux/ppc64le, linux/arm64, freebsd/amd64, netbsd/amd64, darwin/amd64 and windows/amd64
-#		go install -race std; \
 		\
 # remove a few intermediate / bootstrapping files the official binary release tarballs do not contain
 		rm -rf \
