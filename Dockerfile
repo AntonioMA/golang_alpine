@@ -2,14 +2,9 @@ FROM alpine:3.13
 
 RUN apk add --no-cache ca-certificates
 
-# set up nsswitch.conf for Go's "netgo" implementation
-# - https://github.com/golang/go/blob/go1.9.1/src/net/conf.go#L194-L275
-# - docker run --rm debian:stretch grep '^hosts:' /etc/nsswitch.conf
-RUN [ ! -e /etc/nsswitch.conf ] && echo 'hosts: files dns' > /etc/nsswitch.conf
-
 ENV PATH /usr/local/go/bin:$PATH
 
-ENV GOLANG_VERSION 1.18
+ENV GOLANG_VERSION 1.21.3
 
 RUN set -eux; \
 	apk add --no-cache --virtual .fetch-deps gnupg; \
@@ -17,25 +12,36 @@ RUN set -eux; \
 	url=; \
 	case "$arch" in \
 		'x86_64') \
-			export GOARCH='amd64' GOOS='linux'; \
+			url='https://dl.google.com/go/go1.21.3.linux-amd64.tar.gz'; \
+			sha256='1241381b2843fae5a9707eec1f8fb2ef94d827990582c7c7c32f5bdfbfd420c8'; \
 			;; \
 		'armhf') \
-			export GOARCH='arm' GOARM='6' GOOS='linux'; \
+			url='https://dl.google.com/go/go1.21.3.linux-armv6l.tar.gz'; \
+			sha256='a1ddcaaf0821a12a800884c14cb4268ce1c1f5a0301e9060646f1e15e611c6c7'; \
 			;; \
 		'armv7') \
-			export GOARCH='arm' GOARM='7' GOOS='linux'; \
+			url='https://dl.google.com/go/go1.21.3.linux-armv6l.tar.gz'; \
+			sha256='a1ddcaaf0821a12a800884c14cb4268ce1c1f5a0301e9060646f1e15e611c6c7'; \
 			;; \
 		'aarch64') \
-			export GOARCH='arm64' GOOS='linux'; \
+			url='https://dl.google.com/go/go1.21.3.linux-arm64.tar.gz'; \
+			sha256='fc90fa48ae97ba6368eecb914343590bbb61b388089510d0c56c2dde52987ef3'; \
 			;; \
 		'x86') \
-			export GO386='softfloat' GOARCH='386' GOOS='linux'; \
+			url='https://dl.google.com/go/go1.21.3.linux-386.tar.gz'; \
+			sha256='fb209fd070db500a84291c5a95251cceeb1723e8f6142de9baca5af70a927c0e'; \
 			;; \
 		'ppc64le') \
-			export GOARCH='ppc64le' GOOS='linux'; \
+			url='https://dl.google.com/go/go1.21.3.linux-ppc64le.tar.gz'; \
+			sha256='3b0e10a3704f164a6e85e0377728ec5fd21524fabe4c925610e34076586d5826'; \
+			;; \
+		'riscv64') \
+			url='https://dl.google.com/go/go1.21.3.linux-riscv64.tar.gz'; \
+			sha256='67d14d3e513e505d1ec3ea34b55641c6c29556603c7899af94045c170c1c0f94'; \
 			;; \
 		's390x') \
-			export GOARCH='s390x' GOOS='linux'; \
+			url='https://dl.google.com/go/go1.21.3.linux-s390x.tar.gz'; \
+			sha256='4c78e2e6f4c684a3d5a9bdc97202729053f44eb7be188206f0627ef3e18716b6'; \
 			;; \
 		*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
 	esac; \
@@ -43,9 +49,11 @@ RUN set -eux; \
 	if [ -z "$url" ]; then \
 # https://github.com/golang/go/issues/38536#issuecomment-616897960
 		build=1; \
-		url='https://dl.google.com/go/go1.18.src.tar.gz'; \
-		sha256='38f423db4cc834883f2b52344282fa7a39fbb93650dc62a11fdf0be6409bdad6'; \
-# the precompiled binaries published by Go upstream are not compatible with Alpine, so we always build from source here 😅
+		url='https://dl.google.com/go/go1.21.3.src.tar.gz'; \
+		sha256='186f2b6f8c8b704e696821b09ab2041a5c1ee13dcbc3156a13adcf75931ee488'; \
+		echo >&2; \
+		echo >&2 "warning: current architecture ($arch) does not have a compatible Go binary release; will be building from source"; \
+		echo >&2; \
 	fi; \
 	\
 	wget -O go.tgz.asc "$url.asc"; \
@@ -72,19 +80,17 @@ RUN set -eux; \
 			go \
 			musl-dev \
 		; \
-		if [ "$GOARCH" = 'ppc64le' ]; then \
-# https://github.com/golang/go/issues/51787
-			wget -O ppc64le-alpine.patch 'https://github.com/golang/go/commit/946167906ed8646c433c257b074a10e01f0a7dab.patch'; \
-			apk add --no-cache --virtual .build-patch patch; \
-			patch --strip=1 --input="$PWD/ppc64le-alpine.patch" --directory=/usr/local/go; \
-			apk del --no-network .build-patch; \
-			rm ppc64le-alpine.patch; \
-		fi; \
+		\
+		export GOCACHE='/tmp/gocache'; \
 		\
 		( \
 			cd /usr/local/go/src; \
 # set GOROOT_BOOTSTRAP + GOHOST* such that we can build Go successfully
 			export GOROOT_BOOTSTRAP="$(go env GOROOT)" GOHOSTOS="$GOOS" GOHOSTARCH="$GOARCH"; \
+			if [ "${GOARCH:-}" = '386' ]; then \
+# https://github.com/golang/go/issues/52919; https://github.com/docker-library/golang/pull/426#issuecomment-1152623837
+				export CGO_CFLAGS='-fno-stack-protector'; \
+			fi; \
 			./make.bash; \
 		); \
 		\
@@ -98,6 +104,7 @@ RUN set -eux; \
 			/usr/local/go/pkg/tool/*/api \
 			/usr/local/go/pkg/tool/*/go_bootstrap \
 			/usr/local/go/src/cmd/dist/dist \
+			"$GOCACHE" \
 		; \
 	fi; \
 	\
@@ -105,11 +112,11 @@ RUN set -eux; \
 	\
 	go version
 
+# don't auto-upgrade the gotoolchain
+# https://github.com/docker-library/golang/issues/472
+ENV GOTOOLCHAIN=local
+
 ENV GOPATH /go
 ENV PATH $GOPATH/bin:$PATH
-RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 777 "$GOPATH"
-
-RUN set -x && apk update \
-    && apk add --no-cache --update git make
-
+RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 WORKDIR $GOPATH

@@ -8,3 +8,4 @@ So this is a workaround in case you:
 
 This is basically a copy of golang_alpine, only keeping alpine 3.13 so the faccessat2 doesn't raise its ugly head.
 
+Originally comes from: https://github.com/docker-library/golang/tree/master
